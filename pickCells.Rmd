@@ -16,6 +16,9 @@ library(ggthemes)
 library(DESeq2)
 library(robustbase)
 library(ggpubr)
+library(qdapTools)
+library(colorRamps)
+library(RColorBrewer)
 ```
 
 ```{r import data}
@@ -27,7 +30,7 @@ raw.counts[1:5, 1:5]
 ```
 
 DESeq2 requires a matrix with the gene name as row names and a separated matrix for annotation containing the column names (which is the cell lines in this case).
-```{r data import and normalization using DESeq2}
+```{r data import and normalization using DESeq2, message = FALSE}
 # DESeq2 normalization.
 # make the count data matrix
 count.data <- as.matrix(raw.counts[, 3:1078])
@@ -55,7 +58,7 @@ nor.CCLE[1:5,1:5]
 
 Using the EGFR pathway as an example, I want to see what algorithm will provide the most obvious choice cell lines with a high expression of the gene members of a particular pathway. The data of pathway members are be downloaded from reactome.org as .tsv. And I want to try the 1) rank sum, 2) mean, 3) median and the 4) sum of gene expression.
 
-```{r import the genes involved regulations according to Reactome}
+```{r import the genes involved regulations according to Reactome, message = FALSE, warning=FALSE}
 # import the EGFR pathway data and extract the member genes
 egfr <- read.delim("../../signaling_genes/by_EGFR.tsv", 
                    header = TRUE, stringsAsFactors = FALSE)
@@ -100,13 +103,17 @@ ggplot(egfr.matrix.long) +
 
 Based on the plots, mean and sum seem to give the best separation (they are basically the same). By comparing mean and sum to rank sum and median, it also indicates that the outlier cell lines have certain highly expressed genes within the pathway, but not the over-expression of all of the pathway component annotated by reactome.org. I don't think this will adversely affect the choice of cell lines. Because in the end, we want to see the over-activated and to find out the best marker(s) for a particular pathway.
 
+The outlier cell lines will be selected as demonstrated in the following plot. 
+
 ```{r extracting outlier cells}
 cut.off <- quantile(egfr.matrix$Sum, 0.75) + 1.5 * IQR(egfr.matrix$Sum)
 egfr.matrix$x.axis <- 1:nrow(egfr.matrix)
 egfr.matrix$Picked <- egfr.matrix$Sum >= cut.off
 scatter.plot <- ggscatter(egfr.matrix, 
                           x = "x.axis", y = "Sum", 
-                          color = "Picked", palette = c("Grey", "Red"))
+                          color = "Picked", palette = c("Grey", "Red"),
+                          xlab = "Cell lines", 
+                          ylab = "Sum expression of EGFR pathway components")
 
 box <- ggboxplot(egfr.matrix, x = 1, y = "Sum", 
                  alpha = 0.5, 
@@ -116,45 +123,26 @@ combined.plot <- ggarrange(scatter.plot, box,
           ncol = 2, align = "h",
           widths = c(9, 1), heights = c(1,1),
           common.legend = TRUE)
+
 combined.plot
-
-
 ```
 
-```{r reactome gene list + TCGA oncogenes, echo=FALSE}
-########
-# can skip, if I am doing the same thing, there is a break point at 
-# {r match the signaling component and calculate the sum of expressions}
-########
-
-
-# this part deal with the data I downloaded from the Reactome.
-# Mainly, I want to extract the genes involved in each pathway.
-# This will produce a list that I can use to match with the CCLE expression data
-
-# There is also a paper published from TCGA looking at the 
-
-
+With the method figured out, I downloaded other pathway data from the reactome.org to expand our target pathways. 
+```{r reactome gene list}
+# Reading and cleaning up of the reactome files
 # read the files containing the signaling components into a list
-signaling.files <- list.files(path = "signaling_genes", pattern = "by_",
+signaling.files <- list.files(path = "../../signaling_genes", pattern = "by_",
                               full.names = TRUE)            # full name extract the path
-
 # use the file list created above to read the files into a list of df
 # this dfs contain the data from reactome, which have to clean up further to extract the genes
 gene.list <- lapply(signaling.files, read.delim, header = TRUE, stringsAsFactors = FALSE)
-
 # extract the pathway names from the file list
-pathway.names <- lapply(signaling.files, str_sub, 20, -5)
-
+pathway.names <- lapply(signaling.files, str_sub, 26, -5)
 # add pathway names back to the file list
 names(gene.list) <- pathway.names
 
-
-############################################################
-# The gene.list contains a lot of information that I don't need from the Reactome.
-# So write a function to clean it up.
-############################################################
-
+# the reactome data actually contains a lot of information, which I don't need, 
+# so write a function and clean all of them up with lapply()
 extract.genes <- function(x, MoleculeType, MoleculeName) {
   x <- x %>% 
     filter(MoleculeType == "Proteins") %>% 
@@ -165,15 +153,129 @@ extract.genes <- function(x, MoleculeType, MoleculeName) {
 
 # clean up the gene list with the new function
 gene.list <- lapply(gene.list, FUN = extract.genes)
-names(gene.list) <- str_c("Reactome.", names(gene.list))
+names(gene.list) <- str_c("Reactome.", letters[1:length(names(gene.list))])
 
+```
 
-# check the common set between RTKs
-RTK <- gene.list[c("Reactome.EGFR", "Reactome.FGFR", "Reactome.Insulin_receptor", )]
+There are 1016 genes or 736 unique genes in total. The smallest pathway contains 24 genes and 202 for the largest.  
 
-EGFR.WNT <- gene.list[c("Reactome.EGFR", "Reactome.TCF_Wnt")]
+```{r}
+gene.list.long <- list2df(gene.list)
+names(gene.list.long)[1:2] <- c("Gene.names", "Pathways")
+gene.list.long <- gene.list.long %>% separate(Pathways, into = c("Sources", "Pathways"), sep = "\\.")
 
-x <- gene.list$Reactome.TCF_Wnt[gene.list$Reactome.TCF_Wnt %in% gene.list$Reactome.EGFR]
-y <- gene.list$Reactome.EGFR[gene.list$Reactome.EGFR %in% gene.list$Reactome.TCF_Wnt]
-z <- gene.list$Reactome.EGFR[gene.list$Reactome.EGFR %in% gene.list$Reactome.FGFR]
+ggplot(gene.list.long) +
+  geom_bar(mapping = aes(x = Pathways)) +
+  #facet_wrap(~ Sources) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50")) +
+  ylab("Gene count")
+```
+
+```{r match the signaling component and calculate the sum of expressions}
+# Df containing the sum of component expression instead of just the quantile
+cell.pathway.sum <- Reduce(f = function(x, y) cbind(x, y),
+                           x = sum.gene.expression)
+colnames(cell.pathway.sum) <- names(sum.gene.expression)
+cell.pathway.sum$Cells <- rownames(cell.pathway.sum)
+```
+
+```{r calculate cut off and pick cell lines, echo=FALSE}
+# I want to pick the cut off base on the boxplot, 
+# the whisker of the boxplot is 75 % quantile + 1.5 * IQR
+
+# write a function to calculate the cut off for each pathway for picking the cells
+cal.cut.off <- function(x) {
+  cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
+}
+
+# make the list containing the cut off values 
+cut.off.list <- lapply(sum.gene.expression, FUN = cal.cut.off)
+# turn the list into a df
+cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
+
+########
+# picking the cells here
+########
+
+# at this point, the dfs contain 2 columns, 
+# the sum of component expression and the quantile that the cell lines are sitting in each pathway
+
+# make a list of df to hold the cells
+cells.list <- list()
+
+# the for loop to get the cells. Have to use two lists for this
+# 1. the list containing the sum of gene expressions
+# 2. the list containing the cut off 
+for (i in 1:length(sum.gene.expression)) {
+  cells.list[[i]] <- sum.gene.expression[[i]][sum.gene.expression[[i]][,1] >= 
+                                                cut.off.list[i, 1], ,
+                                              drop = FALSE]
+  # add a column containing the pathway names, just to preserve it for later
+  cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- "+"
+  colnames(cells.list[[i]])[2] <- names(sum.gene.expression[i])
+  
+  # the cell line names are the row names now, I want to convert it into a column
+  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- row.names(cells.list[[i]])
+  cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
+}
+
+# reduce repeat the function in a sequential manner, until it finished the list, I think
+# the input is a list, then I added the function with 2 inputs and run full_join()
+cells.list <- purrr::reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
+
+# convert to long form to match with quantile data
+cells.list.long.for.tissues <- cells.list %>%
+  gather(key = "Pathways", value = "Picked", -Cells) %>%
+  filter(Picked == "+") %>%
+  separate(col = Cells, into = c("Cells", "Tissues"), sep = "_", extra = "merge")
+
+cells.list.long.for.merging.and.clustering <- cells.list %>%
+  gather(key = "Pathways", value = "Picked", -Cells) %>%
+  filter(Picked == "+") %>%
+  distinct(Cells)
+
+##############################
+# match picked cells with sum of expression data. SE wants to try clustering
+##############################
+
+# match the picked cell with the quantile information, added a column
+cells.list.sum <- left_join(cells.list.long.for.merging.and.clustering, 
+                            cell.pathway.sum, by = c("Cells"))
+
+```
+
+And there are 259 cell lines from 23 tissue types
+```{r plotting cells data, echo=FALSE}
+
+ggplot(cells.list.long.for.tissues) +
+  geom_bar(mapping = aes(x = Tissues)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white", colour = "grey50")) +
+  guides(fill=FALSE)
+
+```
+
+```{r %pathway in each tissue type, echo=FALSE}
+# I want to see which the percentage of each pathway in each tissue type
+
+# then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
+x <- data.frame(table(cells.list.long.for.tissues[, 2:3]))
+
+# then group the data by tissue type and calculate the percentage of pathway
+y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
+
+# Clean up the table
+z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
+  select(-Freq) %>%
+  spread(key = Pathways, value = Percent) 
+
+# plot it out
+ggplot(y) +
+  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), 
+           stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(23))
+
 ```
