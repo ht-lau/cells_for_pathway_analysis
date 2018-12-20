@@ -1,59 +1,86 @@
----
-title: "Picking CCLE cell lines for pathway analysis"
-output: 
-  github_document
----
+Picking CCLE cell lines for pathway analysis
+================
 
-This is for an R01 application. We want to study cellular signaling using proteomics. The idea is that current knowledge about signaling is very fuzzy, due to the overlap of signaling components between pathways, e.g. both EGFR and FGFR signal through the MAPK signaling cascade.  
+This is for an R01 application. We want to study cellular signaling using proteomics. The idea is that current knowledge about signaling is very fuzzy, due to the overlap of signaling components between pathways, e.g. both EGFR and FGFR signal through the MAPK signaling cascade.
 
-We were criticized about how model CCLE cell lines are picked for the study. So I want to see whether I can find a way to choose the cell lines based on the gene expression level of the pathway components. 
+We were criticized about how model CCLE cell lines are picked for the study. So I want to see whether I can find a way to choose the cell lines based on the gene expression level of the pathway components.
 
-The read count RNA-seq data are downloaded from the CCLE. The data will have to be normalized before use. To do so, DESeq2 will be used. 
+The read count RNA-seq data are downloaded from the CCLE. The data will have to be normalized before use. To do so, DESeq2 will be used.
 
-```{r packages, message=FALSE, echo=FALSE}
-# required packages
-library(tidyverse)
-library(ggthemes)
-library(DESeq2)
-library(robustbase)
-library(ggpubr)
-library(qdapTools)
-library(colorRamps)
-library(RColorBrewer)
-library(gplots)
-```
-
-```{r import data}
+``` r
 # import the raw count data, there are two rows of unwanted materials, so I will have to skip it
 raw.counts <- read.delim("../../CCLE_DepMap_18Q2_RNAseq_reads_20180502.gct",
                          header = TRUE, stringsAsFactors = FALSE,
                          skip = 2)
 raw.counts[1:5, 1:5]
 ```
+
+    ##                Name Description X22RV1_PROSTATE X2313287_STOMACH
+    ## 1 ENSG00000223972.4     DDX11L1               0                2
+    ## 2 ENSG00000227232.4      WASH7P            2316             1538
+    ## 3 ENSG00000243485.2  MIR1302-11               5                1
+    ## 4 ENSG00000237613.2     FAM138A               0                1
+    ## 5 ENSG00000268020.2      OR4G4P               0                0
+    ##   X253JBV_URINARY_TRACT
+    ## 1                     0
+    ## 2                  1094
+    ## 3                    19
+    ## 4                    30
+    ## 5                     3
+
 DESeq2 requires a matrix with the gene name as row names, the count matrix; and a separated matrix for annotation containing the column names (which is the cell lines in this case).
 
-The count matrix, 
-```{r data import and normalization using DESeq2, message = FALSE}
+The count matrix,
+
+``` r
 # DESeq2 normalization.
 
 # make the count data matrix
 count.data <- as.matrix(raw.counts[, 3:1078])
 row.names(count.data) <- raw.counts$Name         # the row names are the Ensembl IDs
 count.data[1:5, 1:5]
-# annotation matrix, this contain a single column named condition, which is the name of the cell lines
+```
 
+    ##                   X22RV1_PROSTATE X2313287_STOMACH X253JBV_URINARY_TRACT
+    ## ENSG00000223972.4               0                2                     0
+    ## ENSG00000227232.4            2316             1538                  1094
+    ## ENSG00000243485.2               5                1                    19
+    ## ENSG00000237613.2               0                1                    30
+    ## ENSG00000268020.2               0                0                     3
+    ##                   X253J_URINARY_TRACT X42MGBA_CENTRAL_NERVOUS_SYSTEM
+    ## ENSG00000223972.4                   4                              0
+    ## ENSG00000227232.4                1148                           1367
+    ## ENSG00000243485.2                  26                             10
+    ## ENSG00000237613.2                  22                              0
+    ## ENSG00000268020.2                   4                              0
+
+``` r
+# annotation matrix, this contain a single column named condition, which is the name of the cell lines
 ```
 
 And the annotation matrix,
-```{r}
+
+``` r
 coldata <- as.matrix(data.frame(condition = names(raw.counts[, 3:1078]))) 
 row.names(coldata) <- names(raw.counts[, 3:1078])   # also make the cell lines as the col.names
 head(coldata, 3)
+```
+
+    ##                       condition              
+    ## X22RV1_PROSTATE       "X22RV1_PROSTATE"      
+    ## X2313287_STOMACH      "X2313287_STOMACH"     
+    ## X253JBV_URINARY_TRACT "X253JBV_URINARY_TRACT"
+
+``` r
 # create the DESeq object
 dds <- DESeqDataSetFromMatrix(countData = count.data,
                               colData = coldata,
                               design = ~condition) # design is just the condition in this case
+```
 
+    ## converting counts to integer mode
+
+``` r
 # then create the normalization factor using estimateSizeFactors()
 dds <- estimateSizeFactors(dds)
 
@@ -62,14 +89,29 @@ nor.CCLE <- raw.counts[, 1:2]
 colnames(nor.CCLE) <- c("Ensembl", "Gene.names")
 nor.CCLE <- cbind(nor.CCLE, data.frame(counts(dds, normalized = TRUE), stringsAsFactors = FALSE), row.names = NULL)
 ```
-The normalized read counts, 
-```{r}
+
+The normalized read counts,
+
+``` r
 nor.CCLE[1:5,1:5]
 ```
 
+    ##             Ensembl Gene.names X22RV1_PROSTATE X2313287_STOMACH
+    ## 1 ENSG00000223972.4    DDX11L1         0.00000         2.085369
+    ## 2 ENSG00000227232.4     WASH7P      1753.92512      1603.648846
+    ## 3 ENSG00000243485.2 MIR1302-11         3.78654         1.042685
+    ## 4 ENSG00000237613.2    FAM138A         0.00000         1.042685
+    ## 5 ENSG00000268020.2     OR4G4P         0.00000         0.000000
+    ##   X253JBV_URINARY_TRACT
+    ## 1               0.00000
+    ## 2            1014.67418
+    ## 3              17.62231
+    ## 4              27.82470
+    ## 5               2.78247
+
 Using the EGFR pathway as an example, I want to see what algorithm will provide the most obvious choice cell lines with a high expression of the gene members of a particular pathway. The data of pathway members are be downloaded from reactome.org as .tsv. And I want to try the 1) rank sum, 2) mean, 3) median and the 4) sum of gene expression.
 
-```{r import the genes involved regulations according to Reactome, message = FALSE, warning=FALSE}
+``` r
 # import the EGFR pathway data and extract the member genes
 egfr <- read.delim("../../signaling_genes/by_EGFR.tsv", 
                    header = TRUE, stringsAsFactors = FALSE)
@@ -78,7 +120,7 @@ egfr <- egfr %>% separate(MoleculeName, into = c("Molecule" , "Gene.name"), sep 
 egfr <- egfr$Gene.name[!duplicated(egfr$Gene.name)]
 ```
 
-```{r try ranking the pathway components}
+``` r
 # Testing which method is best for separating the cell lines
 # copy the df into a new df, so the original will not be modified
 rank.expression <- nor.CCLE
@@ -103,7 +145,7 @@ egfr.matrix$Mean <- colMeans(as.matrix(egfr.ccle[, 3:1078]))
 egfr.matrix$Sum <- colSums(as.matrix(egfr.ccle[, 3:1078]))
 ```
 
-```{r clean up and visualize}
+``` r
 egfr.matrix$Cell.lines <- row.names(egfr.matrix)
 egfr.matrix.long <- egfr.matrix %>% gather(key = "Methods", value = "Expressions", 1:4)
 
@@ -112,11 +154,13 @@ ggplot(egfr.matrix.long) +
   facet_wrap(~ Methods, scales = "free_y")
 ```
 
+![](pickCells_files/figure-markdown_github/clean%20up%20and%20visualize-1.png)
+
 Based on the plots, mean and sum seem to give the best separation (they are basically the same). By comparing mean and sum to rank sum and median, it also indicates that the outlier cell lines have certain highly expressed genes within the pathway, but not the over-expression of all of the pathway component annotated by reactome.org. I don't think this will adversely affect the choice of cell lines. Because in the end, we want to see the over-activated and to find out the best marker(s) for a particular pathway.
 
-The outlier cell lines will be selected as demonstrated in the following plot. 
+The outlier cell lines will be selected as demonstrated in the following plot.
 
-```{r extracting outlier cells}
+``` r
 cut.off <- quantile(egfr.matrix$Sum, 0.75) + 1.5 * IQR(egfr.matrix$Sum)
 egfr.matrix$x.axis <- 1:nrow(egfr.matrix)
 egfr.matrix$Picked <- egfr.matrix$Sum >= cut.off
@@ -138,8 +182,11 @@ combined.plot <- ggarrange(scatter.plot, box,
 combined.plot
 ```
 
-With the method figured out, I downloaded the data of 11 signaling pathways that we will propose to study from the reactome.org. 
-```{r reactome gene list}
+![](pickCells_files/figure-markdown_github/extracting%20outlier%20cells-1.png)
+
+With the method figured out, I downloaded the data of 11 signaling pathways that we will propose to study from the reactome.org.
+
+``` r
 # Reading and cleaning up of the reactome files
 # read the files containing the signaling components into a list
 signaling.files <- list.files(path = "../../signaling_genes", pattern = "by_",
@@ -165,12 +212,11 @@ extract.genes <- function(x, MoleculeType, MoleculeName) {
 # clean up the gene list with the new function
 gene.list <- lapply(gene.list, FUN = extract.genes)
 names(gene.list) <- str_c("Reactome.", letters[1:length(names(gene.list))])
-
 ```
 
-There are 1016 genes or 736 unique genes in total. The smallest pathway contains 24 genes and 202 for the largest.  
+There are 1016 genes or 736 unique genes in total. The smallest pathway contains 24 genes and 202 for the largest.
 
-```{r}
+``` r
 gene.list.long <- list2df(gene.list)
 names(gene.list.long)[1:2] <- c("Gene.names", "Pathways")
 gene.list.long <- gene.list.long %>% separate(Pathways, into = c("Sources", "Pathways"), sep = "\\.")
@@ -183,8 +229,9 @@ ggplot(gene.list.long) +
   ylab("Gene count")
 ```
 
-```{r match the signaling component and calculate the sum of expressions}
+![](pickCells_files/figure-markdown_github/unnamed-chunk-3-1.png)
 
+``` r
 # create a new list to whole the list of df with pathway component expression values
 ccle.pathways <- list()
 
@@ -211,107 +258,15 @@ colnames(cell.pathway.sum) <- names(sum.gene.expression)
 cell.pathway.sum$Cells <- rownames(cell.pathway.sum)
 ```
 
-```{r calculate cut off and pick cell lines, echo=FALSE}
-# I want to pick the cut off base on the boxplot, 
-# the whisker of the boxplot is 75 % quantile + 1.5 * IQR
+And there are 259 cell lines from 23 tissue types. The number of cell lines for each tissue type range from 3 and 4 for AUTONOMIC\_GANGLIA and PROSTATE, respectively to 130 cell lines from fibroblast. ![](pickCells_files/figure-markdown_github/plotting%20cells%20data-1.png)
 
-# write a function to calculate the cut off for each pathway for picking the cells
-cal.cut.off <- function(x) {
-  cut.off <- quantile(x[1][,1], 0.75) + 1.5 * IQR(x[1][,1])
-}
+The pathways that can be studied in each tissue type are also different. Interestingly, HAEMATOPOIETIC\_AND\_LYMPHOID\_TISSUE has all of the 11 pathways.
 
-# make the list containing the cut off values 
-cut.off.list <- lapply(sum.gene.expression, FUN = cal.cut.off)
-# turn the list into a df
-cut.off.list <- data.frame(Cut.off = unlist(cut.off.list))
-
-########
-# picking the cells here
-########
-
-# at this point, the dfs contain 2 columns, 
-# the sum of component expression and the quantile that the cell lines are sitting in each pathway
-
-# make a list of df to hold the cells
-cells.list <- list()
-
-# the for loop to get the cells. Have to use two lists for this
-# 1. the list containing the sum of gene expressions
-# 2. the list containing the cut off 
-for (i in 1:length(sum.gene.expression)) {
-  cells.list[[i]] <- sum.gene.expression[[i]][sum.gene.expression[[i]][,1] >= 
-                                                cut.off.list[i, 1], ,
-                                              drop = FALSE]
-  # add a column containing the pathway names, just to preserve it for later
-  cells.list[[i]][1:nrow(cells.list[[i]]), 2] <- "+"
-  colnames(cells.list[[i]])[2] <- names(sum.gene.expression[i])
-  
-  # the cell line names are the row names now, I want to convert it into a column
-  cells.list[[i]][1:nrow(cells.list[[i]]), 3] <- row.names(cells.list[[i]])
-  cells.list[[i]] <- select(cells.list[[i]], Cells = 3, 2)
-}
-
-# reduce repeat the function in a sequential manner, until it finished the list, I think
-# the input is a list, then I added the function with 2 inputs and run full_join()
-cells.list <- purrr::reduce(cells.list, function(df1, df2) full_join(df1, df2, by = "Cells"))
-
-# convert to long form to match with quantile data
-cells.list.long.for.tissues <- cells.list %>%
-  gather(key = "Pathways", value = "Picked", -Cells) %>%
-  filter(Picked == "+") %>%
-  separate(col = Cells, into = c("Cells", "Tissues"), sep = "_", extra = "merge")
-
-cells.list.long.for.merging.and.clustering <- cells.list %>%
-  gather(key = "Pathways", value = "Picked", -Cells) %>%
-  filter(Picked == "+") %>%
-  distinct(Cells)
-
-
-# match picked cells with sum of expression data. For clustering
-cells.list.sum <- left_join(cells.list.long.for.merging.and.clustering, 
-                            cell.pathway.sum, by = c("Cells"))
-
-```
-
-And there are 259 cell lines from 23 tissue types. The number of cell lines for each tissue type range from 3 and 4 for AUTONOMIC_GANGLIA and PROSTATE, respectively to 130 cell lines from fibroblast. 
-```{r plotting cells data, echo=FALSE}
-
-ggplot(cells.list.long.for.tissues) +
-  geom_bar(mapping = aes(x = Tissues)) +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white", colour = "grey50")) +
-  guides(fill=FALSE)
-
-```
-
-The pathways that can be studied in each tissue type are also different. Interestingly, HAEMATOPOIETIC_AND_LYMPHOID_TISSUE has all of the 11 pathways. 
-
-```{r pathway percent in each tissue type, echo=FALSE}
-# I want to see which the percentage of each pathway in each tissue type
-
-# then get a count table for the cell lines, basically how many cell line is in each pathway in each tissue type
-x <- data.frame(table(cells.list.long.for.tissues[, 2:3]))
-
-# then group the data by tissue type and calculate the percentage of pathway
-y <- group_by(x, Tissues) %>% mutate(Percent = Freq/sum(Freq) * 100)
-
-# Clean up the table
-z <- y %>% mutate(Percent = ifelse(Percent == 0, NA, Percent)) %>%
-  select(-Freq) %>%
-  spread(key = Pathways, value = Percent) 
-
-# plot it out
-ggplot(y) +
-  geom_bar(mapping = aes(x = Tissues, y = Percent, fill = Pathways), 
-           stat = "identity", position = "stack") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1),
-        panel.background = element_rect(fill = "white")) +
-  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(11))
-
-```
+![](pickCells_files/figure-markdown_github/pathway%20percent%20in%20each%20tissue%20type-1.png)
 
 It is probably easier to pick cells after clustering, e.g. pathway h and pathway g are probably more active in the same cluster of cells.
-```{r clustering}
+
+``` r
 # log2 transform the expression
 log.sum <- cells.list.sum %>% 
   separate(col = Cells, into = c("Cells", "Tissues"), sep = "_", extra = "merge")
@@ -325,6 +280,6 @@ heatmap.2(t(log.sum[,3:12]),
           trace = "none",
           labCol = NA,
           xlab = "Cell lines")
-
 ```
 
+![](pickCells_files/figure-markdown_github/clustering-1.png)
